@@ -3,6 +3,8 @@ import random
 import concurrent.futures
 import xmlrpc.client
 import matplotlib.pyplot as plt
+import os
+import csv
 
 SERVIDORES_RPC = [
     "http://localhost:8000", 
@@ -17,6 +19,23 @@ def formatar_matriz_para_md(matriz):
     for linha in matriz:
         linhas_formatadas.append("[" + ", ".join(f"{valor:.6f}" for valor in linha) + "]")
     return "\n".join(linhas_formatadas)
+
+def gerar_tabela_preview_md(matriz, max_linhas=5, max_colunas=5):
+    linhas = min(max_linhas, len(matriz))
+    colunas = min(max_colunas, len(matriz[0]))
+    cabecalho = "| " + " | ".join([f"C{j+1}" for j in range(colunas)]) + " |"
+    separador = "| " + " | ".join(["---"] * colunas) + " |"
+    linhas_tabela = [cabecalho, separador]
+    for i in range(linhas):
+        linha = "| " + " | ".join(f"{matriz[i][j]:.6f}" for j in range(colunas)) + " |"
+        linhas_tabela.append(linha)
+    return "\n".join(linhas_tabela)
+
+def salvar_matriz_csv(caminho, matriz):
+    with open(caminho, "w", newline="", encoding="utf-8") as arquivo_csv:
+        writer = csv.writer(arquivo_csv)
+        for linha in matriz:
+            writer.writerow([f"{valor:.6f}" for valor in linha])
 
 # 1. MULTIPLICAÇÃO LOCAL (TOTALMENTE SERIAL)
 def multiplicar_local_serial(A, B):
@@ -63,7 +82,7 @@ def multiplicar_distribuido(A, B, urls_servidores, modo_paralelo_no_servidor):
     return C
 
 if __name__ == '__main__':
-    tamanhos_n = [50, 100, 150, 200, 250, 300] 
+    tamanhos_n = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 900, 1000] 
     
     tempos_serial = []
     tempos_dist_serial = []
@@ -127,35 +146,38 @@ if __name__ == '__main__':
     # GERAÇÃO DO ARQUIVO result.md COM MATRIZES
     # ==========================================
     print("\nGerando arquivo result.md com as matrizes e resultados...")
+    pasta_matrizes = "matrizes"
+    os.makedirs(pasta_matrizes, exist_ok=True)
     with open("result.md", "w", encoding="utf-8") as arquivo:
         arquivo.write("# Resultados das Multiplicações\n\n")
+
+        arquivo.write("## Tabela comparativa de desempenho\n\n")
+        arquivo.write("| N | Serial Local (s) | Dist. (Escravo S) (s) | Dist. (Escravo P) (s) | Speedup Dist. P |\n")
+        arquivo.write("| --- | --- | --- | --- | --- |\n")
+        for i, N in enumerate(tamanhos_n):
+            arquivo.write(
+                f"| {N} | {tempos_serial[i]:.4f} | {tempos_dist_serial[i]:.4f} | "
+                f"{tempos_dist_paralelo[i]:.4f} | {speedups_dist_paralelo[i]:.2f}x |\n"
+            )
+        arquivo.write("\n")
+
+        arquivo.write("## Matrizes e resultados\n\n")
+        arquivo.write("Os arquivos completos das matrizes estao em CSV na pasta `matrizes/`.\n\n")
         for item in resultados_matrizes:
-            arquivo.write(f"## Matriz {item['N']}x{item['N']}\n\n")
+            n_atual = item["N"]
+            arquivo.write(f"### Matriz {n_atual}x{n_atual}\n\n")
 
-            arquivo.write("### Matriz A\n\n")
-            arquivo.write("```\n")
-            arquivo.write(formatar_matriz_para_md(item["A"]))
-            arquivo.write("\n```\n\n")
+            nome_a = f"N{n_atual}_A.csv"
+            nome_b = f"N{n_atual}_B.csv"
+            nome_c_serial = f"N{n_atual}_C_serial.csv"
+            nome_c_dist_serial = f"N{n_atual}_C_dist_serial.csv"
+            nome_c_dist_paralelo = f"N{n_atual}_C_dist_paralelo.csv"
 
-            arquivo.write("### Matriz B\n\n")
-            arquivo.write("```\n")
-            arquivo.write(formatar_matriz_para_md(item["B"]))
-            arquivo.write("\n```\n\n")
-
-            arquivo.write("### Resultado Serial Local\n\n")
-            arquivo.write("```\n")
-            arquivo.write(formatar_matriz_para_md(item["C_serial"]))
-            arquivo.write("\n```\n\n")
-
-            arquivo.write("### Resultado Distribuido (Escravo Serial)\n\n")
-            arquivo.write("```\n")
-            arquivo.write(formatar_matriz_para_md(item["C_dist_serial"]))
-            arquivo.write("\n```\n\n")
-
-            arquivo.write("### Resultado Distribuido (Escravo Paralelo)\n\n")
-            arquivo.write("```\n")
-            arquivo.write(formatar_matriz_para_md(item["C_dist_paralelo"]))
-            arquivo.write("\n```\n\n")
+            salvar_matriz_csv(os.path.join(pasta_matrizes, nome_a), item["A"])
+            salvar_matriz_csv(os.path.join(pasta_matrizes, nome_b), item["B"])
+            salvar_matriz_csv(os.path.join(pasta_matrizes, nome_c_serial), item["C_serial"])
+            salvar_matriz_csv(os.path.join(pasta_matrizes, nome_c_dist_serial), item["C_dist_serial"])
+            salvar_matriz_csv(os.path.join(pasta_matrizes, nome_c_dist_paralelo), item["C_dist_paralelo"])
 
         arquivo.write("\n")
     print("Arquivo result.md gerado com sucesso.")
