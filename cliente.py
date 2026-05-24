@@ -12,6 +12,12 @@ SERVIDORES_RPC = [
 def gerar_matriz(linhas, colunas):
     return [[random.random() for _ in range(colunas)] for _ in range(linhas)]
 
+def formatar_matriz_para_md(matriz):
+    linhas_formatadas = []
+    for linha in matriz:
+        linhas_formatadas.append("[" + ", ".join(f"{valor:.6f}" for valor in linha) + "]")
+    return "\n".join(linhas_formatadas)
+
 # 1. MULTIPLICAÇÃO LOCAL (TOTALMENTE SERIAL)
 def multiplicar_local_serial(A, B):
     linhas_A, colunas_A, colunas_B = len(A), len(A[0]), len(B[0])
@@ -62,6 +68,8 @@ if __name__ == '__main__':
     tempos_serial = []
     tempos_dist_serial = []
     tempos_dist_paralelo = []
+
+    resultados_matrizes = []
     
     print(f"--- BATERIA DE COMPARAÇÃO TRIPLHA ({len(SERVIDORES_RPC)} nós) ---")
     
@@ -72,21 +80,30 @@ if __name__ == '__main__':
         
         # Teste 1: Totalmente Serial Local
         inicio = time.perf_counter()
-        _ = multiplicar_local_serial(A, B)
+        C_serial = multiplicar_local_serial(A, B)
         t_serial = time.perf_counter() - inicio
         tempos_serial.append(t_serial)
         
         # Teste 2: Distribuído (Com Servidores rodando em Serial)
         inicio = time.perf_counter()
-        _ = multiplicar_distribuido(A, B, SERVIDORES_RPC, modo_paralelo_no_servidor=False)
+        C_dist_serial = multiplicar_distribuido(A, B, SERVIDORES_RPC, modo_paralelo_no_servidor=False)
         t_dist_serial = time.perf_counter() - inicio
         tempos_dist_serial.append(t_dist_serial)
         
         # Teste 3: Distribuído Híbrido (Com Servidores rodando em Paralelo)
         inicio = time.perf_counter()
-        _ = multiplicar_distribuido(A, B, SERVIDORES_RPC, modo_paralelo_no_servidor=True)
+        C_dist_paralelo = multiplicar_distribuido(A, B, SERVIDORES_RPC, modo_paralelo_no_servidor=True)
         t_dist_paralelo = time.perf_counter() - inicio
         tempos_dist_paralelo.append(t_dist_paralelo)
+
+        resultados_matrizes.append({
+            "N": N,
+            "A": A,
+            "B": B,
+            "C_serial": C_serial,
+            "C_dist_serial": C_dist_serial,
+            "C_dist_paralelo": C_dist_paralelo,
+        })
         
         print(f"    S: {t_serial:.4f}s | Dist-Serial: {t_dist_serial:.4f}s | Dist-Paralelo: {t_dist_paralelo:.4f}s")
 
@@ -105,6 +122,43 @@ if __name__ == '__main__':
     for i, N in enumerate(tamanhos_n):
         print(f"{N:<6} | {tempos_serial[i]:<12.4f}s | {tempos_dist_serial[i]:<16.4f}s | {tempos_dist_paralelo[i]:<16.4f}s | {speedups_dist_paralelo[i]:.2f}x")
     print("="*85)
+
+    # ==========================================
+    # GERAÇÃO DO ARQUIVO result.md COM MATRIZES
+    # ==========================================
+    print("\nGerando arquivo result.md com as matrizes e resultados...")
+    with open("result.md", "w", encoding="utf-8") as arquivo:
+        arquivo.write("# Resultados das Multiplicações\n\n")
+        for item in resultados_matrizes:
+            arquivo.write(f"## Matriz {item['N']}x{item['N']}\n\n")
+
+            arquivo.write("### Matriz A\n\n")
+            arquivo.write("```\n")
+            arquivo.write(formatar_matriz_para_md(item["A"]))
+            arquivo.write("\n```\n\n")
+
+            arquivo.write("### Matriz B\n\n")
+            arquivo.write("```\n")
+            arquivo.write(formatar_matriz_para_md(item["B"]))
+            arquivo.write("\n```\n\n")
+
+            arquivo.write("### Resultado Serial Local\n\n")
+            arquivo.write("```\n")
+            arquivo.write(formatar_matriz_para_md(item["C_serial"]))
+            arquivo.write("\n```\n\n")
+
+            arquivo.write("### Resultado Distribuido (Escravo Serial)\n\n")
+            arquivo.write("```\n")
+            arquivo.write(formatar_matriz_para_md(item["C_dist_serial"]))
+            arquivo.write("\n```\n\n")
+
+            arquivo.write("### Resultado Distribuido (Escravo Paralelo)\n\n")
+            arquivo.write("```\n")
+            arquivo.write(formatar_matriz_para_md(item["C_dist_paralelo"]))
+            arquivo.write("\n```\n\n")
+
+        arquivo.write("\n")
+    print("Arquivo result.md gerado com sucesso.")
 
     # ==========================================
     # GERAÇÃO DOS GRÁFICOS COMPARATIVOS
