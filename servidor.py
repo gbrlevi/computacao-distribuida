@@ -39,7 +39,7 @@ def calcular_bloco_paralelo(bloco_A, B, indice_inicio):
     nucleos = multiprocessing.cpu_count()
     
     with concurrent.futures.ProcessPoolExecutor(max_workers=nucleos) as executor:
-        resultados = executor.map(worker_linha_individual, tareas)
+        resultados = executor.map(worker_linha_individual, tarefas)
         for indice_linha, linha_calculada in resultados:
             bloco_C[indice_linha] = linha_calculada
             
