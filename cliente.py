@@ -12,7 +12,8 @@ SERVIDORES_RPC = [
 def gerar_matriz(linhas, colunas):
     return [[random.random() for _ in range(colunas)] for _ in range(linhas)]
 
-def multiplicar_serial(A, B):
+# 1. MULTIPLICAÇÃO LOCAL (TOTALMENTE SERIAL)
+def multiplicar_local_serial(A, B):
     linhas_A, colunas_A, colunas_B = len(A), len(A[0]), len(B[0])
     C = [[0.0 for _ in range(colunas_B)] for _ in range(linhas_A)]
     for i in range(linhas_A):
@@ -21,13 +22,16 @@ def multiplicar_serial(A, B):
                 C[i][j] += A[i][k] * B[k][j]
     return C
 
-def enviar_tarefa_para_servidor(url_servidor, bloco_A, B, indice_inicio):
-    """Envia um bloco da matriz para ser calculado em outra máquina via rede."""
+def enviar_tarefa_para_servidor(url_servidor, bloco_A, B, indice_inicio, modo_paralelo):
+    """Envia a tarefa escolhendo a função do servidor com base no modo."""
     with xmlrpc.client.ServerProxy(url_servidor) as proxy:
-        return proxy.calcular_bloco(bloco_A, B, indice_inicio)
+        if modo_paralelo:
+            return proxy.calcular_bloco_paralelo(bloco_A, B, indice_inicio)
+        else:
+            return proxy.calcular_bloco_serial(bloco_A, B, indice_inicio)
 
-def multiplicar_distribuido(A, B, urls_servidores):
-    """(Metodologia de Foster: Mapeamento e Particionamento Distribuído)."""
+# 2 e 3. ORQUESTRADOR DISTRIBUÍDO (CHAMA O MODO SERIAL OU PARALELO DO ESCRAVO)
+def multiplicar_distribuido(A, B, urls_servidores, modo_paralelo_no_servidor):
     linhas_A = len(A)
     num_nos = len(urls_servidores)
     tamanho_bloco = max(1, linhas_A // num_nos)
@@ -35,14 +39,14 @@ def multiplicar_distribuido(A, B, urls_servidores):
     tarefas = []
     for i, inicio in enumerate(range(0, linhas_A, tamanho_bloco)):
         bloco_A = A[inicio:inicio + tamanho_bloco]
-        url = urls_servidores[i % num_nos] # Balanceia a carga entre os nós
+        url = urls_servidores[i % num_nos]
         tarefas.append((url, bloco_A, B, inicio))
         
     C = [[0.0 for _ in range(len(B[0]))] for _ in range(linhas_A)]
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_nos) as executor:
         futuros = [
-            executor.submit(enviar_tarefa_para_servidor, url, bloco, B, idx) 
+            executor.submit(enviar_tarefa_para_servidor, url, bloco, B, idx, modo_paralelo_no_servidor) 
             for url, bloco, B, idx in tarefas
         ]
         
@@ -56,59 +60,79 @@ if __name__ == '__main__':
     tamanhos_n = [50, 100, 150, 200, 250, 300] 
     
     tempos_serial = []
-    tempos_distribuido = []
-    speedups = []
+    tempos_dist_serial = []
+    tempos_dist_paralelo = []
     
-    print(f"--- BATERIA DE TESTES: DISTRIBUIÇÃO ({len(SERVIDORES_RPC)} nós) ---")
+    print(f"--- BATERIA DE COMPARAÇÃO TRIPLHA ({len(SERVIDORES_RPC)} nós) ---")
     
     for N in tamanhos_n:
-        print(f"  > Matriz {N}x{N}...", end="", flush=True)
+        print(f"  > Executando testes para matriz {N}x{N}...")
         A = gerar_matriz(N, N)
         B = gerar_matriz(N, N)
         
+        # Teste 1: Totalmente Serial Local
         inicio = time.perf_counter()
-        _ = multiplicar_serial(A, B)
+        _ = multiplicar_local_serial(A, B)
         t_serial = time.perf_counter() - inicio
         tempos_serial.append(t_serial)
         
+        # Teste 2: Distribuído (Com Servidores rodando em Serial)
         inicio = time.perf_counter()
-        _ = multiplicar_distribuido(A, B, SERVIDORES_RPC)
-        t_distribuido = time.perf_counter() - inicio
-        tempos_distribuido.append(t_distribuido)
+        _ = multiplicar_distribuido(A, B, SERVIDORES_RPC, modo_paralelo_no_servidor=False)
+        t_dist_serial = time.perf_counter() - inicio
+        tempos_dist_serial.append(t_dist_serial)
         
-        speedup = t_serial / t_distribuido if t_distribuido > 0 else 0
-        speedups.append(speedup)
-        print(f" OK! (Serial: {t_serial:.2f}s | Rede: {t_distribuido:.2f}s)")
+        # Teste 3: Distribuído Híbrido (Com Servidores rodando em Paralelo)
+        inicio = time.perf_counter()
+        _ = multiplicar_distribuido(A, B, SERVIDORES_RPC, modo_paralelo_no_servidor=True)
+        t_dist_paralelo = time.perf_counter() - inicio
+        tempos_dist_paralelo.append(t_dist_paralelo)
+        
+        print(f"    S: {t_serial:.4f}s | Dist-Serial: {t_dist_serial:.4f}s | Dist-Paralelo: {t_dist_paralelo:.4f}s")
 
-    print("\n" + "="*60)
-    print(" " * 15 + "RESUMO DE DESEMPENHO")
-    print("="*60)
-    print(f"{'Tamanho (N)':<15} | {'Tempo Serial':<15} | {'Tempo Distribuído':<15} | {'Speedup'}")
-    print("-" * 60)
+    # Calcular os Speedups em relação ao Serial Puro Local
+    speedups_dist_serial = [s / ds for s, ds in zip(tempos_serial, tempos_dist_serial)]
+    speedups_dist_paralelo = [s / dp for s, dp in zip(tempos_serial, tempos_dist_paralelo)]
+
+    # ==========================================
+    # IMPRESSÃO DA TABELA COMPREENSIVA
+    # ==========================================
+    print("\n" + "="*85)
+    print(" " * 30 + "TABELA COMPARATIVA DE DESEMPENHO")
+    print("="*85)
+    print(f"{'N':<6} | {'Serial Local':<14} | {'Dist. (Escravo S)':<18} | {'Dist. (Escravo P)':<18} | {'SPDP Escravo P'}")
+    print("-" * 85)
     for i, N in enumerate(tamanhos_n):
-        print(f"{N}x{N:<10} | {tempos_serial[i]:<13.4f}s | {tempos_distribuido[i]:<13.4f}s | {speedups[i]:.2f}x")
-    print("="*60)
-    print("\nGerando gráficos...")
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        print(f"{N:<6} | {tempos_serial[i]:<12.4f}s | {tempos_dist_serial[i]:<16.4f}s | {tempos_dist_paralelo[i]:<16.4f}s | {speedups_dist_paralelo[i]:.2f}x")
+    print("="*85)
 
-    ax1.plot(tamanhos_n, tempos_serial, marker='o', color='red', label='Serial (1 núcleo)', linewidth=2)
-    ax1.plot(tamanhos_n, tempos_distribuido, marker='o', color='blue', label=f'Distribuído ({len(SERVIDORES_RPC)} nós)', linewidth=2)
-    ax1.set_title('Tempo de Execução por Tamanho da Matriz', fontsize=14)
-    ax1.set_xlabel('Tamanho da Matriz (N)', fontsize=12)
-    ax1.set_ylabel('Tempo (Segundos)', fontsize=12)
-    ax1.grid(True, linestyle='--', alpha=0.7)
-    ax1.legend(fontsize=12)
+    # ==========================================
+    # GERAÇÃO DOS GRÁFICOS COMPARATIVOS
+    # ==========================================
+    print("\nGerando gráficos triplos...")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-    ax2.plot(tamanhos_n, speedups, marker='s', color='green', linewidth=2)
-    ax2.axhline(y=1, color='gray', linestyle='--', label='Baseline (Sem Ganho)')
-    ax2.set_title('Ganho de Eficiência (Speedup)', fontsize=14)
-    ax2.set_xlabel('Tamanho da Matriz (N)', fontsize=12)
-    ax2.set_ylabel('Vezes Mais Rápido (X)', fontsize=12)
-    ax2.grid(True, linestyle='--', alpha=0.7)
-    ax2.legend(fontsize=12)
+    # Gráfico 1: Curvas de Tempo
+    ax1.plot(tamanhos_n, tempos_serial, marker='o', color='red', label='Serial Local (1 núcleo)', linewidth=2)
+    ax1.plot(tamanhos_n, tempos_dist_serial, marker='v', color='orange', linestyle='--', label='Distribuído (Escravo Serial)', linewidth=2)
+    ax1.plot(tamanhos_n, tempos_dist_paralelo, marker='s', color='blue', label='Distribuído Híbrido (Escravo Paralelo)', linewidth=2)
+    ax1.set_title('Comparação dos Tempos de Execução', fontsize=13)
+    ax1.set_xlabel('Tamanho da Matriz (N)', fontsize=11)
+    ax1.set_ylabel('Tempo (Segundos)', fontsize=11)
+    ax1.grid(True, linestyle='--', alpha=0.5)
+    ax1.legend(fontsize=10)
+
+    # Gráfico 2: Curvas de Speedup Relativo
+    ax2.plot(tamanhos_n, speedups_dist_serial, marker='v', color='orange', linestyle='--', label='Speedup Dist. (Escravo Serial)', linewidth=2)
+    ax2.plot(tamanhos_n, speedups_dist_paralelo, marker='s', color='green', label='Speedup Dist. Híbrido (Escravo Paralelo)', linewidth=2)
+    ax2.axhline(y=1, color='gray', linestyle=':', label='Baseline (Sem Ganho)')
+    ax2.set_title('Ganho de Eficiência (Speedup Relativo ao Serial)', fontsize=13)
+    ax2.set_xlabel('Tamanho da Matriz (N)', fontsize=11)
+    ax2.set_ylabel('Fator de Aceleração (Vezes)', fontsize=11)
+    ax2.grid(True, linestyle='--', alpha=0.5)
+    ax2.legend(fontsize=10)
 
     plt.tight_layout()
-    plt.savefig('grafico_desempenho_matrizes.png', dpi=300)
+    plt.savefig('comparativo_computacao_distribuida.png', dpi=300)
     plt.show()
-    print("Concluído! A imagem 'grafico_desempenho_matrizes.png' foi salva no diretório.")
+    print("Concluído! A imagem 'comparativo_computacao_distribuida.png' foi gerada com sucesso.")
